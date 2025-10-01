@@ -40,25 +40,42 @@ export default {
       return new Response(err.message, fixCors({ status: err.status ?? 500 }));
     };
     try {
+      // 添加详细的认证调试日志
+      console.log(`=== Authentication Debug ===`);
       const auth = request.headers.get("Authorization");
+      console.log(`Authorization header: ${auth ? auth.substring(0, 20) + '...' : 'null'}`);
+      
       let providedToken = auth?.split(" ")[1];
+      console.log(`Extracted token: ${providedToken ? providedToken.substring(0, 10) + '...' : 'null'}`);
+      console.log(`Token length: ${providedToken ? providedToken.length : 0}`);
+      
       let apiKey;
       
       // 验证令牌逻辑 - 只允许使用验证令牌
       if (providedToken) {
+        console.log(`Validating token with validateAuthToken function...`);
         // 检查是否是自定义验证令牌
         if (validateAuthToken && validateAuthToken(providedToken)) {
+          console.log(`✓ Token validation successful`);
           // 验证通过，使用真实的 API Key
           apiKey = getNextApiKey ? getNextApiKey() : null;
           if (!apiKey) {
+            console.log(`✗ No API Key available from pool`);
             throw new HttpError("No API Key available", 500);
           }
           console.log(`Auth token validated, using API Key: ${apiKey.substring(0, 8)}...`);
         } else {
+          console.log(`✗ Token validation failed`);
+          console.log(`validateAuthToken function exists: ${!!validateAuthToken}`);
+          if (validateAuthToken) {
+            console.log(`Available auth tokens count: ${getAuthTokens ? getAuthTokens().length : 'unknown'}`);
+          }
           // 不是有效的验证令牌
           throw new HttpError("Invalid authentication token", 401);
         }
       } else {
+        console.log(`✗ No token provided in Authorization header`);
+        console.log(`Full Authorization header: "${auth}"`);
         // 没有提供令牌
         throw new HttpError("Authentication required", 401);
       }
