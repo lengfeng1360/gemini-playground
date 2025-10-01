@@ -353,7 +353,10 @@ async function handleCompletions (req, apiKey, format = 'openai', routeInfo = {}
   // 如果是 Google SDK 格式，从路由信息中获取模型和流式设置
   if (format === 'google-sdk' && routeInfo.model) {
     model = routeInfo.model;
-    req.stream = routeInfo.stream || false;
+    // 对于 Google SDK 格式，stream 信息已经在 URL 中，不需要在请求体中
+    if (routeInfo.stream !== undefined) {
+      req.stream = routeInfo.stream;
+    }
   }
   
   switch(true) {
@@ -399,8 +402,16 @@ async function handleCompletions (req, apiKey, format = 'openai', routeInfo = {}
       // 确保有生成配置
       generationConfig: req.generationConfig || {}
     };
+    
+    // 对于 Google SDK 格式，移除不支持的字段
+    if (format === 'google-sdk') {
+      delete geminiRequest.stream;
+      delete geminiRequest.stream_format;
+      delete geminiRequest.model; // 模型已经在 URL 中指定
+    }
+    
     requestBody = JSON.stringify(geminiRequest);
-    console.log(`Gemini request body structure:`, Object.keys(geminiRequest));
+    console.log(`${format} request body structure:`, Object.keys(geminiRequest));
   } else {
     // OpenAI格式 - 需要转换
     console.log(`Processing OpenAI format request`);
