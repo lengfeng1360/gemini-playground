@@ -200,6 +200,10 @@ const makeHeaders = (apiKey, more) => ({
 
 // 路由解析函数 - 支持双格式API
 function parseRoute(pathname) {
+  // 添加详细的路径解析日志
+  console.log(`=== parseRoute Debug ===`);
+  console.log(`Original pathname: ${pathname}`);
+  
   // 支持的路径格式:
   // /v1/openai/chat/completions
   // /v1/gemini/chat/completions
@@ -209,6 +213,7 @@ function parseRoute(pathname) {
   // /v1beta/models (Google SDK 格式)
   
   const pathParts = pathname.split('/').filter(part => part);
+  console.log(`Path parts: [${pathParts.join(', ')}]`);
   
   // 检查 Google SDK 原生路径格式
   if (pathParts.length >= 2 && pathParts[0] === 'v1beta') {
@@ -267,6 +272,51 @@ function parseRoute(pathname) {
     const format = pathname.includes('/v1/gemini/') ? 'gemini' : 'openai';
     return { format, endpoint: 'batch' };
   }
+  
+  // 增强的 Gemini 格式路径支持
+  // 检查是否是 CherryStudio 可能使用的其他 Gemini 格式
+  if (pathParts.length >= 1) {
+    // 检查 /gemini/... 格式
+    if (pathParts[0] === 'gemini') {
+      if (pathParts.length >= 2) {
+        const endpoint = pathParts.slice(1).join('/');
+        console.log(`Detected gemini format path: /${pathParts.join('/')}, endpoint: ${endpoint}`);
+        return { format: 'gemini', endpoint };
+      }
+    }
+    
+    // 检查 /v1/... 但不是 openai/gemini 的情况
+    if (pathParts[0] === 'v1' && pathParts.length >= 2) {
+      const secondPart = pathParts[1];
+      // 如果第二部分不是 openai 或 gemini，可能是其他格式
+      if (!['openai', 'gemini'].includes(secondPart)) {
+        const endpoint = pathParts.slice(1).join('/');
+        console.log(`Detected v1 format path: /${pathParts.join('/')}, endpoint: ${endpoint}`);
+        // 默认当作 gemini 格式处理
+        return { format: 'gemini', endpoint };
+      }
+    }
+    
+    // 检查直接的模型调用格式，如 /models/gemini-pro:generateContent
+    if (pathParts[0] === 'models' && pathParts.length >= 2) {
+      const modelPart = pathParts[1];
+      if (modelPart.includes(':generateContent')) {
+        const model = modelPart.split(':')[0];
+        const isStream = modelPart.includes(':streamGenerateContent');
+        console.log(`Detected direct model call: ${modelPart}, model: ${model}, stream: ${isStream}`);
+        return { 
+          format: 'google-sdk', 
+          endpoint: 'chat/completions',
+          model: model,
+          stream: isStream
+        };
+      }
+    }
+  }
+  
+  // 记录未匹配的路径用于调试
+  console.log(`No route match found for: ${pathname}`);
+  console.log(`Returning null route`);
   
   return { format: null, endpoint: null };
 }
@@ -444,11 +494,13 @@ async function handleCompletions (req, apiKey, format = 'openai', routeInfo = {}
     }
 
     let body = response.body;
-    if (format === 'gemini') {
-      // Gemini原生格式 - 直接返回响应
-      body = response.body;
+    if (format === 'gemini' || format === 'google-sdk') {
+      // Gemini原生格式或Google SDK格式 - 直接返回响应
+      console.log(`Returning ${format} format response directly`);
+      body = await response.text();
     } else {
       // OpenAI格式 - 需要转换响应
+      console.log(`Converting response to OpenAI format`);
       let id = generateChatcmplId();
       if (req.stream) {
         body = response.body
