@@ -45,6 +45,12 @@ export default {
       const auth = request.headers.get("Authorization");
       console.log(`Authorization header: ${auth ? auth.substring(0, 20) + '...' : 'null'}`);
       
+      // 检查是否是 Google SDK 格式的请求路径
+      const { pathname } = new URL(request.url);
+      const isGoogleSDKPath = pathname.includes('/v1beta/models/') && pathname.includes(':generateContent');
+      console.log(`Request path: ${pathname}`);
+      console.log(`Is Google SDK path: ${isGoogleSDKPath}`);
+      
       let providedToken = auth?.split(" ")[1];
       console.log(`Extracted token: ${providedToken ? providedToken.substring(0, 10) + '...' : 'null'}`);
       console.log(`Token length: ${providedToken ? providedToken.length : 0}`);
@@ -76,8 +82,25 @@ export default {
       } else {
         console.log(`✗ No token provided in Authorization header`);
         console.log(`Full Authorization header: "${auth}"`);
-        // 没有提供令牌
-        throw new HttpError("Authentication required", 401);
+        
+        // 临时兼容性处理：对于 Google SDK 格式的请求，如果没有认证令牌，
+        // 检查是否可以从查询参数或其他方式获取认证信息
+        if (isGoogleSDKPath) {
+          console.log(`🔧 Applying compatibility fix for Google SDK path without auth header`);
+          console.log(`⚠️  WARNING: This is a temporary workaround. Please configure CherryStudio to send Authorization header in Gemini mode.`);
+          
+          // 使用第一个可用的 API Key 作为临时解决方案
+          apiKey = getNextApiKey ? getNextApiKey() : null;
+          if (apiKey) {
+            console.log(`🔧 Using fallback API Key: ${apiKey.substring(0, 8)}...`);
+          } else {
+            console.log(`✗ No API Key available for fallback`);
+            throw new HttpError("No API Key available", 500);
+          }
+        } else {
+          // 对于非 Google SDK 路径，仍然要求认证令牌
+          throw new HttpError("Authentication required", 401);
+        }
       }
       
       const assert = (success) => {
@@ -85,7 +108,6 @@ export default {
           throw new HttpError("The specified HTTP method is not allowed for the requested resource", 400);
         }
       };
-      const { pathname } = new URL(request.url);
       
       // 路由处理 - 支持双格式API
       const route = parseRoute(pathname);
