@@ -47,7 +47,8 @@ export default {
       
       // 检查是否是 Google SDK 格式的请求路径
       const { pathname } = new URL(request.url);
-      const isGoogleSDKPath = pathname.includes('/v1beta/models/') && pathname.includes(':generateContent');
+      const isGoogleSDKPath = pathname.includes('/v1beta/models/') && 
+                             (pathname.includes(':generateContent') || pathname.includes(':streamGenerateContent'));
       console.log(`Request path: ${pathname}`);
       console.log(`Is Google SDK path: ${isGoogleSDKPath}`);
       
@@ -265,9 +266,10 @@ function parseRoute(pathname) {
       // /v1beta/models/{model}:generateContent 或 :streamGenerateContent
       if (pathParts.length === 3) {
         const modelPart = pathParts[2];
-        if (modelPart.includes(':generateContent')) {
+        if (modelPart.includes(':generateContent') || modelPart.includes(':streamGenerateContent')) {
           const model = modelPart.split(':')[0];
           const isStream = modelPart.includes(':streamGenerateContent');
+          console.log(`Matched Google SDK path: model=${model}, isStream=${isStream}`);
           return { 
             format: 'google-sdk', 
             endpoint: 'chat/completions',
@@ -534,9 +536,16 @@ async function handleCompletions (req, apiKey, format = 'openai', routeInfo = {}
 
     let body = response.body;
     if (format === 'gemini' || format === 'google-sdk') {
-      // Gemini原生格式或Google SDK格式 - 直接返回响应
+      // Gemini原生格式或Google SDK格式 - 保持原始流式响应
       console.log(`Returning ${format} format response directly`);
-      body = await response.text();
+      if (req.stream) {
+        // 对于流式响应，保持原始的 response.body 以支持实时更新
+        console.log(`Preserving stream for ${format} format`);
+        body = response.body;
+      } else {
+        // 对于非流式响应，可以安全地读取文本
+        body = await response.text();
+      }
     } else {
       // OpenAI格式 - 需要转换响应
       console.log(`Converting response to OpenAI format`);
