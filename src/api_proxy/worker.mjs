@@ -4,6 +4,32 @@
 
 import { Buffer } from "node:buffer";
 
+// API Key 管理 - 这些函数将从外部注入
+let API_KEYS = [];
+let currentKeyIndex = 0;
+let addApiKey, removeApiKey, getNextApiKey, getApiKeys;
+let AUTH_TOKENS = []; // 自定义验证令牌
+let getAuthTokens, addAuthToken, removeAuthToken, validateAuthToken;
+
+// 初始化 API Key 管理函数（由 deno_index.ts 注入）
+function initializeApiKeyManagement(keyManagement) {
+  API_KEYS = keyManagement.getApiKeys();
+  addApiKey = keyManagement.addApiKey;
+  removeApiKey = keyManagement.removeApiKey;
+  getNextApiKey = keyManagement.getNextApiKey;
+  getApiKeys = keyManagement.getApiKeys;
+  
+  // 初始化验证令牌管理
+  AUTH_TOKENS = keyManagement.getAuthTokens ? keyManagement.getAuthTokens() : [];
+  getAuthTokens = keyManagement.getAuthTokens;
+  addAuthToken = keyManagement.addAuthToken;
+  removeAuthToken = keyManagement.removeAuthToken;
+  validateAuthToken = keyManagement.validateAuthToken;
+}
+
+// 导出初始化函数供外部使用
+export { initializeApiKeyManagement };
+
 export default {
   async fetch (request) {
     if (request.method === "OPTIONS") {
@@ -15,26 +41,119 @@ export default {
     };
     try {
       const auth = request.headers.get("Authorization");
-      const apiKey = auth?.split(" ")[1];
+      let providedToken = auth?.split(" ")[1];
+      let apiKey;
+      
+      // 验证令牌逻辑 - 只允许使用验证令牌
+      if (providedToken) {
+        // 检查是否是自定义验证令牌
+        if (validateAuthToken && validateAuthToken(providedToken)) {
+          // 验证通过，使用真实的 API Key
+          apiKey = getNextApiKey ? getNextApiKey() : null;
+          if (!apiKey) {
+            throw new HttpError("No API Key available", 500);
+          }
+          console.log(`Auth token validated, using API Key: ${apiKey.substring(0, 8)}...`);
+        } else {
+          // 不是有效的验证令牌
+          throw new HttpError("Invalid authentication token", 401);
+        }
+      } else {
+        // 没有提供令牌
+        throw new HttpError("Authentication required", 401);
+      }
+      
       const assert = (success) => {
         if (!success) {
           throw new HttpError("The specified HTTP method is not allowed for the requested resource", 400);
         }
       };
       const { pathname } = new URL(request.url);
-      switch (true) {
-        case pathname.endsWith("/chat/completions"):
+      
+      // 路由处理 - 支持双格式API
+      const route = parseRoute(pathname);
+      
+      // 添加调试日志
+      console.log(`Using API Key: ${apiKey ? apiKey.substring(0, 8) + '...' : 'None'}`);
+      console.log(`Request path: ${pathname}`);
+      console.log(`Route format: ${route.format}, endpoint: ${route.endpoint}`);
+      
+      switch (route.endpoint) {
+        case "chat/completions":
           assert(request.method === "POST");
-          return handleCompletions(await request.json(), apiKey)
+          return handleCompletions(await request.json(), apiKey, route.format, route)
             .catch(errHandler);
-        case pathname.endsWith("/embeddings"):
+        case "embeddings":
           assert(request.method === "POST");
-          return handleEmbeddings(await request.json(), apiKey)
+          return handleEmbeddings(await request.json(), apiKey, route.format)
             .catch(errHandler);
-        case pathname.endsWith("/models"):
+        case "models":
           assert(request.method === "GET");
-          return handleModels(apiKey)
+          return handleModels(apiKey, route.format)
             .catch(errHandler);
+        case "batch":
+          assert(request.method === "POST");
+          return handleBatch(await request.json(), apiKey, route.format)
+            .catch(errHandler);
+        // 新增管理 API Key 的端点
+        case "api-keys":
+          switch (request.method) {
+            case "GET":
+              const keys = getApiKeys ? getApiKeys() : [];
+              // 返回部分隐藏的 API Keys 用于前端显示
+              const maskedKeys = keys.map(key => ({
+                id: key.substring(0, 8) + '...' + key.substring(key.length - 4),
+                full: key
+              }));
+              return new Response(JSON.stringify(maskedKeys), fixCors({ headers: { "Content-Type": "application/json" } }));
+            case "POST":
+              const newKey = await request.text();
+              if (addApiKey) {
+                addApiKey(newKey);
+                return new Response("API Key added", fixCors({ status: 201 }));
+              } else {
+                throw new HttpError("API Key management not initialized", 500);
+              }
+            case "DELETE":
+              const keyToRemove = await request.text();
+              if (removeApiKey) {
+                removeApiKey(keyToRemove);
+                return new Response("API Key removed", fixCors());
+              } else {
+                throw new HttpError("API Key management not initialized", 500);
+              }
+            default:
+              throw new HttpError("Method not allowed", 405);
+          }
+        case "auth-tokens":
+          switch (request.method) {
+            case "GET":
+              const tokens = getAuthTokens ? getAuthTokens() : [];
+              // 返回部分隐藏的验证令牌
+              const maskedTokens = tokens.map(token => ({
+                id: token.substring(0, 8) + '...' + token.substring(token.length - 4),
+                full: token
+              }));
+              return new Response(JSON.stringify(maskedTokens), fixCors({ headers: { "Content-Type": "application/json" } }));
+            case "POST":
+              const newToken = await request.text();
+              if (addAuthToken) {
+                addAuthToken(newToken);
+                return new Response("Auth token added", fixCors({ status: 201 }));
+              } else {
+                throw new HttpError("Auth token management not initialized", 500);
+              }
+            case "DELETE":
+              const tokenToRemove = await request.text();
+              if (removeAuthToken) {
+                removeAuthToken(tokenToRemove);
+                return new Response("Auth token removed", fixCors());
+              } else {
+                throw new HttpError("Auth token management not initialized", 500);
+              }
+            default:
+              throw new HttpError("Method not allowed", 405);
+          }
         default:
           throw new HttpError("404 Not Found", 404);
       }
@@ -79,28 +198,108 @@ const makeHeaders = (apiKey, more) => ({
   ...more
 });
 
-async function handleModels (apiKey) {
+// 路由解析函数 - 支持双格式API
+function parseRoute(pathname) {
+  // 支持的路径格式:
+  // /v1/openai/chat/completions
+  // /v1/gemini/chat/completions
+  // /chat/completions (默认为openai格式)
+  // /v1beta/models/{model}:generateContent (Google SDK 格式)
+  // /v1beta/models/{model}:streamGenerateContent (Google SDK 格式)
+  // /v1beta/models (Google SDK 格式)
+  
+  const pathParts = pathname.split('/').filter(part => part);
+  
+  // 检查 Google SDK 原生路径格式
+  if (pathParts.length >= 2 && pathParts[0] === 'v1beta') {
+    if (pathParts[1] === 'models') {
+      // /v1beta/models - 列出模型
+      if (pathParts.length === 2) {
+        return { format: 'google-sdk', endpoint: 'models' };
+      }
+      
+      // /v1beta/models/{model}:generateContent 或 :streamGenerateContent
+      if (pathParts.length === 3) {
+        const modelPart = pathParts[2];
+        if (modelPart.includes(':generateContent')) {
+          const model = modelPart.split(':')[0];
+          const isStream = modelPart.includes(':streamGenerateContent');
+          return { 
+            format: 'google-sdk', 
+            endpoint: 'chat/completions',
+            model: model,
+            stream: isStream
+          };
+        }
+      }
+    }
+  }
+  
+  // 检查是否是新的双格式路径
+  if (pathParts.length >= 3 && pathParts[0] === 'v1') {
+    const format = pathParts[1]; // openai 或 gemini
+    const endpoint = pathParts.slice(2).join('/'); // chat/completions, embeddings, etc.
+    
+    if (['openai', 'gemini'].includes(format)) {
+      return { format, endpoint };
+    }
+  }
+  
+  // 兼容旧的路径格式
+  if (pathname.endsWith("/chat/completions")) {
+    return { format: 'openai', endpoint: 'chat/completions' };
+  }
+  if (pathname.endsWith("/embeddings")) {
+    return { format: 'openai', endpoint: 'embeddings' };
+  }
+  if (pathname.endsWith("/models")) {
+    return { format: 'openai', endpoint: 'models' };
+  }
+  if (pathname.endsWith("/api-keys")) {
+    return { format: 'openai', endpoint: 'api-keys' };
+  }
+  if (pathname.endsWith("/auth-tokens")) {
+    return { format: 'openai', endpoint: 'auth-tokens' };
+  }
+  
+  // 检查批量请求
+  if (pathname.includes("/batch")) {
+    const format = pathname.includes('/v1/gemini/') ? 'gemini' : 'openai';
+    return { format, endpoint: 'batch' };
+  }
+  
+  return { format: null, endpoint: null };
+}
+
+async function handleModels (apiKey, format = 'openai') {
   const response = await fetch(`${BASE_URL}/${API_VERSION}/models`, {
     headers: makeHeaders(apiKey),
   });
   let { body } = response;
   if (response.ok) {
     const { models } = JSON.parse(await response.text());
-    body = JSON.stringify({
-      object: "list",
-      data: models.map(({ name }) => ({
-        id: name.replace("models/", ""),
-        object: "model",
-        created: 0,
-        owned_by: "",
-      })),
-    }, null, "  ");
+    
+    if (format === 'gemini' || format === 'google-sdk') {
+      // Gemini原生格式或Google SDK格式
+      body = JSON.stringify({ models }, null, "  ");
+    } else {
+      // OpenAI格式
+      body = JSON.stringify({
+        object: "list",
+        data: models.map(({ name }) => ({
+          id: name.replace("models/", ""),
+          object: "model",
+          created: 0,
+          owned_by: "",
+        })),
+      }, null, "  ");
+    }
   }
   return new Response(body, fixCors(response));
 }
 
 const DEFAULT_EMBEDDINGS_MODEL = "text-embedding-004";
-async function handleEmbeddings (req, apiKey) {
+async function handleEmbeddings (req, apiKey, format = 'openai') {
   if (typeof req.model !== "string") {
     throw new HttpError("model is not specified", 400);
   }
@@ -141,52 +340,160 @@ async function handleEmbeddings (req, apiKey) {
   return new Response(body, fixCors(response));
 }
 
-const DEFAULT_MODEL = "gemini-1.5-pro-latest";
-async function handleCompletions (req, apiKey) {
-  let model = DEFAULT_MODEL;
-  switch(true) {
-    case typeof req.model !== "string":
-      break;
-    case req.model.startsWith("models/"):
-      model = req.model.substring(7);
-      break;
-    case req.model.startsWith("gemini-"):
-    case req.model.startsWith("learnlm-"):
-      model = req.model;
+const DEFAULT_MODEL = "gemini-2.5-pro";
+async function handleCompletions (req, apiKey, format = 'openai', routeInfo = {}) {
+  let model = req.model || DEFAULT_MODEL;
+  
+  // 如果是 Google SDK 格式，从路由信息中获取模型和流式设置
+  if (format === 'google-sdk' && routeInfo.model) {
+    model = routeInfo.model;
+    req.stream = routeInfo.stream || false;
   }
+  
+  switch(true) {
+    case typeof model !== "string":
+      model = DEFAULT_MODEL;
+      break;
+    case model.startsWith("models/"):
+      model = model.substring(7);
+      break;
+    case model.startsWith("gemini-"):
+    case model.startsWith("learnlm-"):
+      // model is already in correct format
+      break;
+    default:
+      // 如果模型名称不符合预期格式，使用默认模型
+      console.log(`Unknown model format: ${model}, using default: ${DEFAULT_MODEL}`);
+      model = DEFAULT_MODEL;
+  }
+  
   const TASK = req.stream ? "streamGenerateContent" : "generateContent";
   let url = `${BASE_URL}/${API_VERSION}/models/${model}:${TASK}`;
-  if (req.stream) { url += "?alt=sse"; }
-  const response = await fetch(url, {
-    method: "POST",
-    headers: makeHeaders(apiKey, { "Content-Type": "application/json" }),
-    body: JSON.stringify(await transformRequest(req)), // try
-  });
-
-  let body = response.body;
-  if (response.ok) {
-    let id = generateChatcmplId(); //"chatcmpl-8pMMaqXMK68B3nyDBrapTDrhkHBQK";
-    if (req.stream) {
-      body = response.body
-        .pipeThrough(new TextDecoderStream())
-        .pipeThrough(new TransformStream({
-          transform: parseStream,
-          flush: parseStreamFlush,
-          buffer: "",
-        }))
-        .pipeThrough(new TransformStream({
-          transform: toOpenAiStream,
-          flush: toOpenAiStreamFlush,
-          streamIncludeUsage: req.stream_options?.include_usage,
-          model, id, last: [],
-        }))
-        .pipeThrough(new TextEncoderStream());
+  
+  // 支持不同的流式响应格式
+  if (req.stream) {
+    if (req.stream_format === 'streamable') {
+      // 使用streamable格式
+      url += "?alt=json";
     } else {
-      body = await response.text();
-      body = processCompletionsResponse(JSON.parse(body), model, id);
+      // 默认使用SSE格式
+      url += "?alt=sse";
     }
   }
-  return new Response(body, fixCors(response));
+  
+  // 根据格式处理请求体
+  let requestBody;
+  if (format === 'gemini' || format === 'google-sdk') {
+    // Gemini原生格式或Google SDK格式 - 直接传递请求体
+    requestBody = JSON.stringify(req);
+  } else {
+    // OpenAI格式 - 需要转换
+    requestBody = JSON.stringify(await transformRequest(req));
+  }
+  
+  // 添加网络连接诊断和超时处理
+  console.log(`Making request to: ${url}`);
+  console.log(`Request body preview: ${requestBody.substring(0, 200)}...`);
+  
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+  
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: makeHeaders(apiKey, { "Content-Type": "application/json" }),
+      body: requestBody,
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    console.log(`Response status: ${response.status}`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`API Error: ${response.status} - ${errorText}`);
+      throw new HttpError(`Gemini API Error: ${response.status} - ${errorText}`, response.status);
+    }
+
+    let body = response.body;
+    if (format === 'gemini') {
+      // Gemini原生格式 - 直接返回响应
+      body = response.body;
+    } else {
+      // OpenAI格式 - 需要转换响应
+      let id = generateChatcmplId();
+      if (req.stream) {
+        body = response.body
+          .pipeThrough(new TextDecoderStream())
+          .pipeThrough(new TransformStream({
+            transform: parseStream,
+            flush: parseStreamFlush,
+            buffer: "",
+          }))
+          .pipeThrough(new TransformStream({
+            transform: toOpenAiStream,
+            flush: toOpenAiStreamFlush,
+            streamIncludeUsage: req.stream_options?.include_usage,
+            model, id, last: [],
+          }))
+          .pipeThrough(new TextEncoderStream());
+      } else {
+        body = await response.text();
+        body = processCompletionsResponse(JSON.parse(body), model, id);
+      }
+    }
+    return new Response(body, fixCors(response));
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Request timeout');
+      throw new HttpError('Request timeout', 408);
+    }
+    console.error('Network error:', error);
+    throw new HttpError(`Network error: ${error.message}`, 500);
+  }
+}
+
+// 批量请求处理函数
+async function handleBatch(req, apiKey, format = 'openai') {
+  if (!Array.isArray(req.requests)) {
+    throw new HttpError("requests must be an array", 400);
+  }
+  
+  const results = [];
+  const promises = req.requests.map(async (request, index) => {
+    try {
+      const response = await handleCompletions(request, apiKey, format);
+      const responseData = await response.json();
+      return {
+        id: request.custom_id || `batch_${index}`,
+        response: {
+          status_code: 200,
+          body: responseData
+        }
+      };
+    } catch (error) {
+      return {
+        id: request.custom_id || `batch_${index}`,
+        response: {
+          status_code: error.status || 500,
+          body: { error: { message: error.message } }
+        }
+      };
+    }
+  });
+  
+  const batchResults = await Promise.all(promises);
+  
+  const responseBody = {
+    object: "list",
+    data: batchResults,
+    has_more: false
+  };
+  
+  return new Response(JSON.stringify(responseBody), fixCors({
+    headers: { "Content-Type": "application/json" }
+  }));
 }
 
 const harmCategory = [

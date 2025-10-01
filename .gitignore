@@ -172,3 +172,5 @@ dist
 .dev.vars
 .wrangler/
 deno.lock
+环境变量和运行命令.txt
+添加环境变量和执行启动.bat

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>增强的请求日志测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #1a73e8;
+        }
+        h2 {
+            color: #202124;
+            margin-top: 0;
+        }
+        .improvement {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #e8f5e9;
+            border-left: 4px solid #4caf50;
+            border-radius: 4px;
+        }
+        .code-block {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        .status.completed {
+            background-color: #e8f5e9;
+            color: #388e3c;
+        }
+        .button {
+            background-color: #1a73e8;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 10px;
+        }
+        .button:hover {
+            background-color: #1557b0;
+        }
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .comparison-item {
+            padding: 15px;
+            border-radius: 4px;
+            background-color: #f8f9fa;
+        }
+        .comparison-item h3 {
+            margin-top: 0;
+            color: #202124;
+        }
+        .old {
+            border-left: 4px solid #ea4335;
+        }
+        .new {
+            border-left: 4px solid #34a853;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎉 增强的请求日志功能测试报告</h1>
+    
+    <div class="test-section">
+        <h2>问题描述</h2>
+        <p>用户反馈：API 请求日志显示过于简单，无法进行分析。原始日志只显示：</p>
+        <div class="code-block">
+GET 02:15:21
+pending
+/auth-tokens
+查看详情
+请求头
+{}
+        </div>
+        <p><strong>缺少的关键信息：</strong>请求头为空、没有响应信息、缺少性能指标等。</p>
+    </div>
+
+    <div class="test-section">
+        <h2>改进内容对比</h2>
+        <div class="comparison">
+            <div class="comparison-item old">
+                <h3>❌ 改进前</h3>
+                <ul>
+                    <li>请求头显示为空对象 {}</li>
+                    <li>只有基本的方法、时间、URL</li>
+                    <li>没有响应头信息</li>
+                    <li>没有请求体详情</li>
+                    <li>没有性能指标</li>
+                    <li>错误信息不详细</li>
+                </ul>
+            </div>
+            <div class="comparison-item new">
+                <h3>✅ 改进后</h3>
+                <ul>
+                    <li>完整的请求头（包括 User-Agent、Referer、Origin）</li>
+                    <li>详细的 URL 解析（协议、主机、路径、查询参数）</li>
+                    <li>完整的响应头信息</li>
+                    <li>格式化的请求体和响应体</li>
+                    <li>性能指标（开始时间、结束时间、总耗时）</li>
+                    <li>详细的错误堆栈信息</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>1. 增强的请求信息捕获</h2>
+        <div class="improvement">
+            <strong>✅ 已完成：</strong>自动捕获完整的请求头信息
+        </div>
+        <p>新增的请求头信息：</p>
+        <div class="code-block">
+{
+  "Authorization": "Bearer YOUR_AUTH_TOKEN",
+  "Content-Type": "application/json",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)...",
+  "Referer": "http://localhost:8000/",
+  "Origin": "http://localhost:8000"
+}
+        </div>
+        <span class="status completed">已实施</span>
+    </div>
+
+    <div class="test-section">
+        <h2>2. URL 详细解析</h2>
+        <div class="improvement">
+            <strong>✅ 已完成：</strong>解析并显示 URL 的各个组成部分
+        </div>
+        <p>URL 信息包括：</p>
+        <ul>
+            <li><strong>完整 URL：</strong>http://localhost:8000/auth-tokens?limit=10</li>
+            <li><strong>主机：</strong>localhost:8000</li>
+            <li><strong>协议：</strong>http:</li>
+            <li><strong>路径：</strong>/auth-tokens</li>
+            <li><strong>查询参数：</strong>?limit=10（高亮显示）</li>
+        </ul>
+        <span class="status completed">已实施</span>
+    </div>
+
+    <div class="test-section">
+        <h2>3. 响应信息增强</h2>
+        <div class="improvement">
+            <strong>✅ 已完成：</strong>捕获并显示完整的响应信息
+        </div>
+        <p>新增的响应信息：</p>
+        <ul>
+            <li><strong>响应头：</strong>完整的 HTTP 响应头</li>
+            <li><strong>响应体：</strong>格式化的 JSON 或文本内容</li>
+            <li><strong>响应大小：</strong>以 KB 为单位显示</li>
+            <li><strong>状态文本：</strong>如 "200 OK", "401 Unauthorized"</li>
+        </ul>
+        <span class="status completed">已实施</span>
+    </div>
+
+    <div class="test-section">
+        <h2>4. 性能指标</h2>
+        <div class="improvement">
+            <strong>✅ 已完成：</strong>添加详细的性能指标
+        </div>
+        <p>性能信息包括：</p>
+        <div class="code-block">
+性能指标
+开始时间: 02:15:21.123
+结束时间: 02:15:21.456
+总耗时: 333ms
+        </div>
+        <p>耗时现在也会显示在日志头部，方便快速查看。</p>
+        <span class="status completed">已实施</span>
+    </div>
+
+    <div class="test-section">
+        <h2>5. 错误信息增强</h2>
+        <div class="improvement">
+            <strong>✅ 已完成：</strong>提供详细的错误信息和堆栈追踪
+        </div>
+        <p>错误信息包括：</p>
+        <ul>
+            <li><strong>错误类型：</strong>NetworkError, TypeError 等</li>
+            <li><strong>错误消息：</strong>详细的错误描述</li>
+            <li><strong>错误堆栈：</strong>完整的调用堆栈（用于调试）</li>
+        </ul>
+        <span class="status completed">已实施</span>
+    </div>
+
+    <div class="test-section">
+        <h2>6. UI 改进</h2>
+        <div class="improvement">
+            <strong>✅ 已完成：</strong>改进日志显示样式
+        </div>
+        <p>UI 改进包括：</p>
+        <ul>
+            <li>不同 HTTP 方法的颜色区分（GET、POST、PUT、DELETE、WebSocket）</li>
+            <li>状态码颜色指示（成功=绿色、错误=红色、警告=橙色）</li>
+            <li>耗时显示在日志头部</li>
+            <li>查询参数高亮显示</li>
+            <li>代码块使用 <code>&lt;pre&gt;</code> 标签，保持格式</li>
+            <li>错误部分使用红色标题</li>
+            <li>日志项悬停效果</li>
+        </ul>
+        <span class="status completed">已实施</span>
+    </div>
+
+    <div class="test-section">
+        <h2>测试步骤</h2>
+        <ol>
+            <li>打开应用主页面</li>
+            <li>切换到"请求日志"标签页</li>
+            <li>执行一些 API 操作（如连接 WebSocket、获取令牌列表等）</li>
+            <li>查看日志列表，注意新增的信息：
+                <ul>
+                    <li>日志头部显示方法、时间和耗时</li>
+                    <li>URL 显示路径和查询参数</li>
+                    <li>状态码有颜色指示</li>
+                </ul>
+            </li>
+            <li>点击"查看详情"查看完整信息：
+                <ul>
+                    <li>请求信息部分</li>
+                    <li>请求头（不再是空对象）</li>
+                    <li>请求体（如果有）</li>
+                    <li>响应头</li>
+                    <li>响应体</li>
+                    <li>响应大小</li>
+                    <li>性能指标</li>
+                    <li>错误信息（如果有）</li>
+                </ul>
+            </li>
+        </ol>
+        <button class="button" onclick="window.location.href='/index.html'">
+            打开应用测试
+        </button>
+    </div>
+
+    <div class="test-section">
+        <h2>总结</h2>
+        <p>所有请求日志增强功能已经成功实施：</p>
+        <ul>
+            <li>✅ 捕获完整的请求头信息</li>
+            <li>✅ 解析并显示 URL 详细信息</li>
+            <li>✅ 记录响应头和响应体</li>
+            <li>✅ 添加性能指标</li>
+            <li>✅ 提供详细的错误信息</li>
+            <li>✅ 改进 UI 显示效果</li>
+        </ul>
+        <p><strong>现在您可以通过请求日志获得更多有用的调试和分析信息！</strong></p>
+    </div>
+</body>
+</html>

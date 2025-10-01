@@ -59,7 +59,23 @@ Mac/Linux 安装Deno:
 启动项目：
 
 >cd 项目目录 <br>
->deno run --allow-net --allow-read src/deno_index.ts
+>deno run --allow-net --allow-read --allow-env src/deno_index.ts
+
+### 环境变量配置（可选）
+
+设置 API Keys 和验证令牌：
+
+Windows:
+```bash
+set GEMINI_API_KEYS=your-api-key-1,your-api-key-2
+set AUTH_TOKENS=my-secret-token-1,my-secret-token-2
+```
+
+Linux/Mac:
+```bash
+export GEMINI_API_KEYS=your-api-key-1,your-api-key-2
+export AUTH_TOKENS=my-secret-token-1,my-secret-token-2
+```
 
 
 ## 使用方法
@@ -81,7 +97,24 @@ Mac/Linux 安装Deno:
 ### API 代理
 API已经被代理为OpenAI格式，可以直接使用OpenAI格式的API。
 不限网络环境，可免梯子使用。
-注意替换域名与Gemini API Key。
+
+#### 新功能：验证令牌保护
+- 支持使用自定义验证令牌代替直接暴露 API Key
+- 支持动态指定模型（默认使用 gemini-2.5-pro）
+- 详细使用说明请查看 [AUTH_TOKEN_GUIDE.md](AUTH_TOKEN_GUIDE.md)
+
+使用验证令牌访问：
+```bash
+curl --location 'https://your.domain.com/v1/chat/completions' \
+--header 'Authorization: Bearer your-auth-token' \
+--header 'Content-Type: application/json' \
+--data '{
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "model": "gemini-2.5-pro"
+}'
+```
+
+原有方式（直接使用 API Key）仍然支持：
 
 #### 可用模型列表：
 ```

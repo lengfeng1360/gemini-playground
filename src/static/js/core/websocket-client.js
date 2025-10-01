@@ -17,8 +17,9 @@ export class MultimodalLiveClient extends EventEmitter {
      *
      * @param {Object} options - Configuration options.
      * @param {string} [options.url] - The WebSocket URL for the Gemini API. Defaults to a URL constructed with the provided API key.
+     * @param {boolean} [options.useNativeFormat=false] - Whether to use Gemini's native format instead of OpenAI format.
      */
-    constructor() {
+    constructor(options = {}) {
         super();
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         this.baseUrl  = `${wsProtocol}//${window.location.host}/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent`;
@@ -26,6 +27,7 @@ export class MultimodalLiveClient extends EventEmitter {
         this.config = null;
         this.send = this.send.bind(this);
         this.toolManager = new ToolManager();
+        this.useNativeFormat = options.useNativeFormat || false;
     }
 
     /**
@@ -294,4 +296,4 @@ export class MultimodalLiveClient extends EventEmitter {
             });
         }
     }
-} 
+}

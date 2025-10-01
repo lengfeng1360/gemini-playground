@@ -38,6 +38,26 @@ const systemInstructionInput = document.getElementById('system-instruction');
 systemInstructionInput.value = CONFIG.SYSTEM_INSTRUCTION.TEXT;
 const applyConfigButton = document.getElementById('apply-config');
 const responseTypeSelect = document.getElementById('response-type-select');
+const apiFormatSelect = document.getElementById('api-format-select');
+
+// 新增的 API Key 管理元素
+const manageKeysBtn = document.getElementById('manage-keys-btn');
+const apiKeysManager = document.getElementById('api-keys-manager');
+const apiKeysList = document.getElementById('api-keys-list');
+const newApiKeyInput = document.getElementById('new-api-key');
+const addApiKeyBtn = document.getElementById('add-api-key');
+
+// 新增的 Auth Token 管理元素
+const manageAuthTokensBtn = document.getElementById('manage-auth-tokens-btn');
+const authTokensManager = document.getElementById('auth-tokens-manager');
+const authTokensList = document.getElementById('auth-tokens-list');
+const newAuthTokenInput = document.getElementById('new-auth-token');
+const addAuthTokenBtn = document.getElementById('add-auth-token');
+
+// API Key 管理相关变量
+let apiKeys = [];
+let authTokens = [];
+
 
 // Load saved values from localStorage
 const savedApiKey = localStorage.getItem('gemini_api_key');
@@ -96,8 +116,8 @@ let isScreenSharing = false;
 let screenRecorder = null;
 let isUsingTool = false;
 
-// Multimodal Client
-const client = new MultimodalLiveClient();
+// Multimodal Client - 将在连接时创建
+let client = null;
 
 /**
  * Logs a message to the UI.
@@ -198,17 +218,19 @@ async function handleMicToggle() {
             const inputDataArray = new Uint8Array(inputAnalyser.frequencyBinCount);
             
             await audioRecorder.start((base64Data) => {
-                if (isUsingTool) {
-                    client.sendRealtimeInput([{
-                        mimeType: "audio/pcm;rate=16000",
-                        data: base64Data,
-                        interrupt: true     // Model isn't interruptable when using tools, so we do it manually
-                    }]);
-                } else {
-                    client.sendRealtimeInput([{
-                        mimeType: "audio/pcm;rate=16000",
-                        data: base64Data
-                    }]);
+                if (client) {
+                    if (isUsingTool) {
+                        client.sendRealtimeInput([{
+                            mimeType: "audio/pcm;rate=16000",
+                            data: base64Data,
+                            interrupt: true     // Model isn't interruptable when using tools, so we do it manually
+                        }]);
+                    } else {
+                        client.sendRealtimeInput([{
+                            mimeType: "audio/pcm;rate=16000",
+                            data: base64Data
+                        }]);
+                    }
                 }
                 
                 inputAnalyser.getByteFrequencyData(inputDataArray);
@@ -267,6 +289,7 @@ async function connectToWebsocket() {
     localStorage.setItem('gemini_voice', voiceSelect.value);
     localStorage.setItem('gemini_language', languageSelect.value);
     localStorage.setItem('system_instruction', systemInstructionInput.value);
+    localStorage.setItem('api_format', apiFormatSelect.value);
 
     const config = {
         model: CONFIG.API.MODEL_NAME,
@@ -290,7 +313,14 @@ async function connectToWebsocket() {
     };  
 
     try {
-        await client.connect(config,apiKeyInput.value);
+        // 根据选择的 API 格式创建客户端
+        const useNativeFormat = apiFormatSelect.value === 'gemini';
+        client = new MultimodalLiveClient({ useNativeFormat });
+        
+        // 设置事件监听器
+        setupClientEventListeners(client);
+        
+        await client.connect(config, apiKeyInput.value);
         isConnected = true;
         await resumeAudioContext();
         connectButton.textContent = 'Disconnect';
@@ -300,12 +330,13 @@ async function connectToWebsocket() {
         micButton.disabled = false;
         cameraButton.disabled = false;
         screenButton.disabled = false;
-        logMessage('Connected to Gemini Multimodal Live API', 'system');
+        logMessage(`Connected to Gemini Multimodal Live API (${useNativeFormat ? 'Native' : 'OpenAI'} format)`, 'system');
     } catch (error) {
         const errorMessage = error.message || 'Unknown error';
         Logger.error('Connection error:', error);
         logMessage(`Connection error: ${errorMessage}`, 'system');
         isConnected = false;
+        client = null;
         connectButton.textContent = 'Connect';
         connectButton.classList.remove('connected');
         messageInput.disabled = true;
@@ -320,7 +351,10 @@ async function connectToWebsocket() {
  * Disconnects from the WebSocket server.
  */
 function disconnectFromWebsocket() {
-    client.disconnect();
+    if (client) {
+        client.disconnect();
+        client = null;
+    }
     isConnected = false;
     if (audioStreamer) {
         audioStreamer.stop();
@@ -354,7 +388,7 @@ function disconnectFromWebsocket() {
  */
 function handleSendMessage() {
     const message = messageInput.value.trim();
-    if (message) {
+    if (message && client) {
         logMessage(message, 'user');
         client.send({ text: message });
         messageInput.value = '';
@@ -362,76 +396,78 @@ function handleSendMessage() {
 }
 
 // Event Listeners
-client.on('open', () => {
-    logMessage('WebSocket connection opened', 'system');
-});
+function setupClientEventListeners(client) {
+    client.on('open', () => {
+        logMessage('WebSocket connection opened', 'system');
+    });
 
-client.on('log', (log) => {
-    logMessage(`${log.type}: ${JSON.stringify(log.message)}`, 'system');
-});
+    client.on('log', (log) => {
+        logMessage(`${log.type}: ${JSON.stringify(log.message)}`, 'system');
+    });
 
-client.on('close', (event) => {
-    logMessage(`WebSocket connection closed (code ${event.code})`, 'system');
-});
+    client.on('close', (event) => {
+        logMessage(`WebSocket connection closed (code ${event.code})`, 'system');
+    });
 
-client.on('audio', async (data) => {
-    try {
-        await resumeAudioContext();
-        const streamer = await ensureAudioInitialized();
-        streamer.addPCM16(new Uint8Array(data));
-    } catch (error) {
-        logMessage(`Error processing audio: ${error.message}`, 'system');
-    }
-});
-
-client.on('content', (data) => {
-    if (data.modelTurn) {
-        if (data.modelTurn.parts.some(part => part.functionCall)) {
-            isUsingTool = true;
-            Logger.info('Model is using a tool');
-        } else if (data.modelTurn.parts.some(part => part.functionResponse)) {
-            isUsingTool = false;
-            Logger.info('Tool usage completed');
+    client.on('audio', async (data) => {
+        try {
+            await resumeAudioContext();
+            const streamer = await ensureAudioInitialized();
+            streamer.addPCM16(new Uint8Array(data));
+        } catch (error) {
+            logMessage(`Error processing audio: ${error.message}`, 'system');
         }
+    });
 
-        const text = data.modelTurn.parts.map(part => part.text).join('');
-        if (text) {
-            logMessage(text, 'ai');
+    client.on('content', (data) => {
+        if (data.modelTurn) {
+            if (data.modelTurn.parts.some(part => part.functionCall)) {
+                isUsingTool = true;
+                Logger.info('Model is using a tool');
+            } else if (data.modelTurn.parts.some(part => part.functionResponse)) {
+                isUsingTool = false;
+                Logger.info('Tool usage completed');
+            }
+
+            const text = data.modelTurn.parts.map(part => part.text).join('');
+            if (text) {
+                logMessage(text, 'ai');
+            }
         }
-    }
-});
+    });
 
-client.on('interrupted', () => {
-    audioStreamer?.stop();
-    isUsingTool = false;
-    Logger.info('Model interrupted');
-    logMessage('Model interrupted', 'system');
-});
+    client.on('interrupted', () => {
+        audioStreamer?.stop();
+        isUsingTool = false;
+        Logger.info('Model interrupted');
+        logMessage('Model interrupted', 'system');
+    });
 
-client.on('setupcomplete', () => {
-    logMessage('Setup complete', 'system');
-});
+    client.on('setupcomplete', () => {
+        logMessage('Setup complete', 'system');
+    });
 
-client.on('turncomplete', () => {
-    isUsingTool = false;
-    logMessage('Turn complete', 'system');
-});
+    client.on('turncomplete', () => {
+        isUsingTool = false;
+        logMessage('Turn complete', 'system');
+    });
 
-client.on('error', (error) => {
-    if (error instanceof ApplicationError) {
-        Logger.error(`Application error: ${error.message}`, error);
-    } else {
-        Logger.error('Unexpected error', error);
-    }
-    logMessage(`Error: ${error.message}`, 'system');
-});
+    client.on('error', (error) => {
+        if (error instanceof ApplicationError) {
+            Logger.error(`Application error: ${error.message}`, error);
+        } else {
+            Logger.error('Unexpected error', error);
+        }
+        logMessage(`Error: ${error.message}`, 'system');
+    });
 
-client.on('message', (message) => {
-    if (message.error) {
-        Logger.error('Server error:', message.error);
-        logMessage(`Server error: ${message.error}`, 'system');
-    }
-});
+    client.on('message', (message) => {
+        if (message.error) {
+            Logger.error('Server error:', message.error);
+            logMessage(`Server error: ${message.error}`, 'system');
+        }
+    });
+}
 
 sendButton.addEventListener('click', handleSendMessage);
 messageInput.addEventListener('keypress', (event) => {
@@ -472,7 +508,7 @@ async function handleVideoToggle() {
             }
             
             await videoManager.start(fpsInput.value,(frameData) => {
-                if (isConnected) {
+                if (isConnected && client) {
                     client.sendRealtimeInput([frameData]);
                 }
             });
@@ -527,7 +563,7 @@ async function handleScreenShare() {
             
             screenRecorder = new ScreenRecorder();
             await screenRecorder.start(screenPreview, (frameData) => {
-                if (isConnected) {
+                if (isConnected && client) {
                     client.sendRealtimeInput([{
                         mimeType: "image/jpeg",
                         data: frameData
@@ -571,3 +607,221 @@ function stopScreenSharing() {
 
 screenButton.addEventListener('click', handleScreenShare);
 screenButton.disabled = true;
+
+// API Key 管理功能
+async function fetchApiKeys() {
+    try {
+        const response = await fetch('/api-keys', {
+            credentials: 'include' // 包含 Cookie
+        });
+        if (response.ok) {
+            apiKeys = await response.json();
+            renderApiKeysList();
+        } else {
+            logMessage('Failed to fetch API keys', 'system');
+        }
+    } catch (error) {
+        logMessage(`Error fetching API keys: ${error.message}`, 'system');
+    }
+}
+
+function renderApiKeysList() {
+    apiKeysList.innerHTML = '';
+    apiKeys.forEach((keyObj, index) => {
+        const keyItem = document.createElement('div');
+        keyItem.className = 'api-key-item';
+        
+        const keyValue = document.createElement('div');
+        keyValue.className = 'api-key-value';
+        // 显示部分隐藏的 API Key
+        keyValue.textContent = keyObj.id || keyObj;
+        
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-api-key';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('click', () => removeApiKey(keyObj.full || keyObj));
+        
+        keyItem.appendChild(keyValue);
+        keyItem.appendChild(removeBtn);
+        apiKeysList.appendChild(keyItem);
+    });
+}
+
+async function addApiKey() {
+    const key = newApiKeyInput.value.trim();
+    if (!key) {
+        logMessage('Please enter an API key', 'system');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api-keys', {
+            method: 'POST',
+            credentials: 'include', // 包含 Cookie
+            headers: {
+                'Content-Type': 'text/plain'
+            },
+            body: key
+        });
+        
+        if (response.ok) {
+            newApiKeyInput.value = '';
+            logMessage('API key added successfully', 'system');
+            fetchApiKeys(); // 重新获取并显示更新后的列表
+        } else {
+            logMessage('Failed to add API key', 'system');
+        }
+    } catch (error) {
+        logMessage(`Error adding API key: ${error.message}`, 'system');
+    }
+}
+
+async function removeApiKey(key) {
+    try {
+        const response = await fetch('/api-keys', {
+            method: 'DELETE',
+            credentials: 'include', // 包含 Cookie
+            headers: {
+                'Content-Type': 'text/plain'
+            },
+            body: key
+        });
+        
+        if (response.ok) {
+            logMessage('API key removed successfully', 'system');
+            fetchApiKeys(); // 重新获取并显示更新后的列表
+        } else {
+            logMessage('Failed to remove API key', 'system');
+        }
+    } catch (error) {
+        logMessage(`Error removing API key: ${error.message}`, 'system');
+    }
+}
+
+// 事件监听器
+manageKeysBtn.addEventListener('click', () => {
+    apiKeysManager.style.display = apiKeysManager.style.display === 'none' ? 'block' : 'none';
+    if (apiKeysManager.style.display === 'block') {
+        fetchApiKeys(); // 显示管理器时获取最新的 API Key 列表
+    }
+});
+
+addApiKeyBtn.addEventListener('click', addApiKey);
+
+// Auth Token 管理功能
+async function fetchAuthTokens() {
+    try {
+        const response = await fetch('/auth-tokens', {
+            credentials: 'include' // 包含 Cookie
+        });
+        if (response.ok) {
+            authTokens = await response.json();
+            renderAuthTokensList();
+        } else {
+            logMessage('Failed to fetch auth tokens', 'system');
+        }
+    } catch (error) {
+        logMessage(`Error fetching auth tokens: ${error.message}`, 'system');
+    }
+}
+
+function renderAuthTokensList() {
+    authTokensList.innerHTML = '';
+    authTokens.forEach((tokenObj) => {
+        const tokenItem = document.createElement('div');
+        tokenItem.className = 'api-key-item'; // 复用相同的样式
+        
+        const tokenValue = document.createElement('div');
+        tokenValue.className = 'api-key-value';
+        // 显示部分隐藏的 Auth Token
+        tokenValue.textContent = tokenObj.id || tokenObj;
+        
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-api-key';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('click', () => removeAuthToken(tokenObj.full || tokenObj));
+        
+        tokenItem.appendChild(tokenValue);
+        tokenItem.appendChild(removeBtn);
+        authTokensList.appendChild(tokenItem);
+    });
+}
+
+async function addAuthToken() {
+    const token = newAuthTokenInput.value.trim();
+    if (!token) {
+        logMessage('Please enter an auth token', 'system');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/auth-tokens', {
+            method: 'POST',
+            credentials: 'include', // 包含 Cookie
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ token })
+        });
+        
+        if (response.ok) {
+            newAuthTokenInput.value = '';
+            logMessage('Auth token added successfully', 'system');
+            fetchAuthTokens(); // 重新获取并显示更新后的列表
+        } else {
+            const error = await response.json();
+            logMessage(`Failed to add auth token: ${error.message}`, 'system');
+        }
+    } catch (error) {
+        logMessage(`Error adding auth token: ${error.message}`, 'system');
+    }
+}
+
+async function removeAuthToken(token) {
+    try {
+        const response = await fetch('/auth-tokens', {
+            method: 'DELETE',
+            credentials: 'include', // 包含 Cookie
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ token })
+        });
+        
+        if (response.ok) {
+            logMessage('Auth token removed successfully', 'system');
+            fetchAuthTokens(); // 重新获取并显示更新后的列表
+        } else {
+            logMessage('Failed to remove auth token', 'system');
+        }
+    } catch (error) {
+        logMessage(`Error removing auth token: ${error.message}`, 'system');
+    }
+}
+
+// Auth Token 管理事件监听器
+manageAuthTokensBtn.addEventListener('click', () => {
+    authTokensManager.style.display = authTokensManager.style.display === 'none' ? 'block' : 'none';
+    if (authTokensManager.style.display === 'block') {
+        fetchAuthTokens(); // 显示管理器时获取最新的 Auth Token 列表
+    }
+});
+
+addAuthTokenBtn.addEventListener('click', addAuthToken);
+
+// 页面加载时初始化
+document.addEventListener('DOMContentLoaded', () => {
+    // 可以在这里添加初始化代码
+    
+    // 添加登出按钮事件处理
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', () => {
+            if (confirm('确定要登出吗？')) {
+                if (typeof AuthManager !== 'undefined') {
+                    AuthManager.logout();
+                }
+            }
+        });
+    }
+});
