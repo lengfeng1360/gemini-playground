@@ -342,6 +342,12 @@ async function handleEmbeddings (req, apiKey, format = 'openai') {
 
 const DEFAULT_MODEL = "gemini-2.5-pro";
 async function handleCompletions (req, apiKey, format = 'openai', routeInfo = {}) {
+  // 添加详细的调试日志
+  console.log(`=== handleCompletions Debug Info ===`);
+  console.log(`Format: ${format}`);
+  console.log(`API Key (masked): ${apiKey ? apiKey.substring(0, 8) + '...' + apiKey.substring(apiKey.length - 4) : 'None'}`);
+  console.log(`Request model: ${req.model || 'undefined'}`);
+  
   let model = req.model || DEFAULT_MODEL;
   
   // 如果是 Google SDK 格式，从路由信息中获取模型和流式设置
@@ -384,15 +390,26 @@ async function handleCompletions (req, apiKey, format = 'openai', routeInfo = {}
   // 根据格式处理请求体
   let requestBody;
   if (format === 'gemini' || format === 'google-sdk') {
-    // Gemini原生格式或Google SDK格式 - 直接传递请求体
-    requestBody = JSON.stringify(req);
+    // Gemini原生格式或Google SDK格式 - 需要确保包含必要的配置
+    console.log(`Processing ${format} format request`);
+    const geminiRequest = {
+      ...req,
+      // 确保包含安全设置（如果没有提供的话）
+      safetySettings: req.safetySettings || safetySettings,
+      // 确保有生成配置
+      generationConfig: req.generationConfig || {}
+    };
+    requestBody = JSON.stringify(geminiRequest);
+    console.log(`Gemini request body structure:`, Object.keys(geminiRequest));
   } else {
     // OpenAI格式 - 需要转换
+    console.log(`Processing OpenAI format request`);
     requestBody = JSON.stringify(await transformRequest(req));
   }
   
   // 添加网络连接诊断和超时处理
   console.log(`Making request to: ${url}`);
+  console.log(`Using API Key: ${apiKey ? apiKey.substring(0, 8) + '...' : 'None'}`);
   console.log(`Request body preview: ${requestBody.substring(0, 200)}...`);
   
   const controller = new AbortController();
