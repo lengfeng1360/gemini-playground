@@ -431,7 +431,7 @@ async function handleEmbeddings (req, apiKey, format = 'openai') {
   return new Response(body, fixCors(response));
 }
 
-const DEFAULT_MODEL = "gemini-2.5-pro";
+const DEFAULT_MODEL = "gemini-3.1-flash-lite";
 async function handleCompletions (req, apiKey, format = 'openai', routeInfo = {}) {
   // 添加详细的调试日志
   console.log(`=== handleCompletions Debug Info ===`);
@@ -440,31 +440,13 @@ async function handleCompletions (req, apiKey, format = 'openai', routeInfo = {}
   console.log(`Request model: ${req.model || 'undefined'}`);
   
   let model = req.model || DEFAULT_MODEL;
-  
-  // 如果是 Google SDK 格式，从路由信息中获取模型和流式设置
+
+  // 如果是 Google SDK 格式，model 来自 URL 路径而非请求体
   if (format === 'google-sdk' && routeInfo.model) {
     model = routeInfo.model;
-    // 对于 Google SDK 格式，stream 信息已经在 URL 中，不需要在请求体中
     if (routeInfo.stream !== undefined) {
       req.stream = routeInfo.stream;
     }
-  }
-  
-  switch(true) {
-    case typeof model !== "string":
-      model = DEFAULT_MODEL;
-      break;
-    case model.startsWith("models/"):
-      model = model.substring(7);
-      break;
-    case model.startsWith("gemini-"):
-    case model.startsWith("learnlm-"):
-      // model is already in correct format
-      break;
-    default:
-      // 如果模型名称不符合预期格式，使用默认模型
-      console.log(`Unknown model format: ${model}, using default: ${DEFAULT_MODEL}`);
-      model = DEFAULT_MODEL;
   }
   
   const TASK = req.stream ? "streamGenerateContent" : "generateContent";
